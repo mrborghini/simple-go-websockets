@@ -91,10 +91,16 @@ func readFrame(conn io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("WebSocket frame too large")
 	}
 
-	// Read mask key
-	maskKey := make([]byte, 4)
-	if _, err := io.ReadFull(conn, maskKey); err != nil {
-		return nil, err
+	// Check if the message is masked
+	isMasked := (header[1] & 0x80) != 0
+	var maskKey [4]byte
+
+	// Clients **MUST** mask their messages; servers **MUST NOT**.
+	// If the message is from a client, we must unmask it.
+	if isMasked {
+		if _, err := io.ReadFull(conn, maskKey[:]); err != nil {
+			return nil, err
+		}
 	}
 
 	// Read payload data
@@ -103,9 +109,11 @@ func readFrame(conn io.Reader) ([]byte, error) {
 		return nil, err
 	}
 
-	// Unmask the payload (clients must always mask messages)
-	for i := range payload {
-		payload[i] ^= maskKey[i%4]
+	// Unmask only if the message is masked
+	if isMasked {
+		for i := range payload {
+			payload[i] ^= maskKey[i%4]
+		}
 	}
 
 	return payload, nil
