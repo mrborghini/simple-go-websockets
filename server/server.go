@@ -74,6 +74,7 @@ func UpgradeToWebSocket(w http.ResponseWriter, r *http.Request, handler WSHandle
 }
 
 func readFrame(conn io.Reader) ([]byte, error) {
+	// Read first 2 bytes (FIN, RSV, Opcode | MASK, Payload length)
 	header := make([]byte, 2)
 	if _, err := io.ReadFull(conn, header); err != nil {
 		return nil, err
@@ -81,6 +82,8 @@ func readFrame(conn io.Reader) ([]byte, error) {
 
 	// Extract payload length
 	payloadLen := int(header[1] & 0x7F)
+
+	// Extended payload length
 	if payloadLen == 126 {
 		extLen := make([]byte, 2)
 		if _, err := io.ReadFull(conn, extLen); err != nil {
@@ -88,19 +91,24 @@ func readFrame(conn io.Reader) ([]byte, error) {
 		}
 		payloadLen = int(extLen[0])<<8 | int(extLen[1])
 	} else if payloadLen == 127 {
-		return nil, fmt.Errorf("WebSocket frame too large")
-	}
-
-	// Check if the message is masked
-	isMasked := (header[1] & 0x80) != 0
-	var maskKey [4]byte
-
-	// Clients **MUST** mask their messages; servers **MUST NOT**.
-	// If the message is from a client, we must unmask it.
-	if isMasked {
-		if _, err := io.ReadFull(conn, maskKey[:]); err != nil {
+		extLen := make([]byte, 8)
+		if _, err := io.ReadFull(conn, extLen); err != nil {
 			return nil, err
 		}
+		payloadLen = int(extLen[0])<<56 | int(extLen[1])<<48 | int(extLen[2])<<40 | int(extLen[3])<<32 |
+			int(extLen[4])<<24 | int(extLen[5])<<16 | int(extLen[6])<<8 | int(extLen[7])
+	}
+
+	// Ensure the message is masked (clients **must** send masked messages)
+	isMasked := (header[1] & 0x80) != 0
+	if !isMasked {
+		return nil, fmt.Errorf("Invalid WebSocket frame: MASK must be set")
+	}
+
+	// Read masking key
+	maskKey := make([]byte, 4)
+	if _, err := io.ReadFull(conn, maskKey); err != nil {
+		return nil, err
 	}
 
 	// Read payload data
@@ -109,11 +117,9 @@ func readFrame(conn io.Reader) ([]byte, error) {
 		return nil, err
 	}
 
-	// Unmask only if the message is masked
-	if isMasked {
-		for i := range payload {
-			payload[i] ^= maskKey[i%4]
-		}
+	// Unmask payload
+	for i := 0; i < payloadLen; i++ {
+		payload[i] ^= maskKey[i%4]
 	}
 
 	return payload, nil
