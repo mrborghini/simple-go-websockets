@@ -120,8 +120,19 @@ func readFrame(conn io.Reader) ([]byte, error) {
 }
 
 func writeFrame(conn io.Writer, message []byte) error {
-	// WebSocket text frame: FIN=1, RSV=000, Opcode=0001 (text)
-	header := []byte{0x81, byte(len(message))}
+	// Determine the payload length encoding
+	var header []byte
+	payloadLen := len(message)
+
+	if payloadLen <= 125 {
+		header = []byte{0x81, byte(payloadLen)}
+	} else if payloadLen <= 65535 {
+		header = []byte{0x81, 126, byte(payloadLen >> 8), byte(payloadLen & 0xFF)}
+	} else {
+		header = []byte{0x81, 127,
+			byte(payloadLen >> 56), byte(payloadLen >> 48), byte(payloadLen >> 40), byte(payloadLen >> 32),
+			byte(payloadLen >> 24), byte(payloadLen >> 16), byte(payloadLen >> 8), byte(payloadLen & 0xFF)}
+	}
 
 	// Write header and payload
 	_, err := conn.Write(append(header, message...))
