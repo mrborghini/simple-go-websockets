@@ -3,7 +3,6 @@ package server
 import (
 	"crypto/sha1"
 	"encoding/base64"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -100,10 +99,11 @@ func readFrame(conn io.Reader) ([]byte, error) {
 	}
 
 	// Ensure the message is masked (clients **must** send masked messages)
-	isMasked := (header[1] & 0x80) != 0
-	if !isMasked {
-		return nil, fmt.Errorf("Invalid WebSocket frame: MASK must be set")
-	}
+	// isMasked := (header[1] & 0x80) != 0
+	// Clients MUST send masked messages; servers MUST NOT.
+	// if !isMasked {
+	// 	return nil, fmt.Errorf("invalid WebSocket frame: MASK must be clear")
+	// }
 
 	// Read masking key
 	maskKey := make([]byte, 4)
