@@ -1,0 +1,92 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  extract-version:
+    runs-on: ubuntu-latest
+    outputs:
+        version: ${{ steps.set_version.outputs.version }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Get latest tag version from GitHub
+      id: latest_tag
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        latest=$(gh api repos/${{ github.repository }}/tags --jq '.[0].name' || echo "0.0.0")
+        # Remove leading "v" if it exists
+        latest=${latest#v}
+        echo "latest_tag=$latest" >> $GITHUB_OUTPUT
+
+    - name: Determine new version
+      id: set_version
+      run: |
+        latest="${{ steps.latest_tag.outputs.latest_tag }}"
+        if [[ "$latest" == "" ]]; then
+          latest="0.0.0"
+        fi
+
+        IFS='.' read -r major minor patch <<< "$latest"
+
+        # Increment logic: bump patch until it reaches 10, then bump minor
+        if [[ "$patch" -lt 9 ]]; then
+          patch=$((patch + 1))
+        else
+          patch=0
+          minor=$((minor + 1))
+        fi
+
+        new_version="$major.$minor.$patch"
+        echo "version=$new_version" >> $GITHUB_OUTPUT
+
+
+  build-linux-x86_64:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Run tests
+      run: go test
+  
+  
+  release:
+    runs-on: ubuntu-latest
+    needs:
+      - extract-version
+      - build-linux-x86_64
+
+    env:
+      EXTRACTED_VERSION: ${{ needs.extract-version.outputs.version }}
+      ARTIFACTS_DIR: "downloaded-artifacts/"
+      LINUX_AMD64_PATH: ""
+      LINUX_AMD64_MUSL_PATH: ""
+      LINUX_AARCH64_PATH: ""
+      WINDOWS_AMD64_PATH: ""
+      WINDOWS_AARCH64_PATH: ""
+    
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install github CLI
+      run: sudo apt install gh -y
+    
+    - name: Create GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Fetch commit history since the last tag
+        # RELEASE_NOTES=$(git log $(git describe --tags --abbrev=0)..HEAD --pretty=format:"- %h %s (%an)")
+
+        # Alternative: Fetch merged PRs if using GitHub CLI
+        RELEASE_NOTES=$(gh api repos/:owner/:repo/pulls --jq '.[] | select(.merged_at != null) | "- #\(.number) \(.title) (@\(.user.login))"')
+
+        gh release create $EXTRACTED_VERSION --generate-notes --title "Release $EXTRACTED_VERSION"

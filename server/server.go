@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type WSHandler interface {
@@ -71,6 +72,21 @@ func UpgradeToWebSocket(w http.ResponseWriter, r *http.Request, handler WSHandle
 	handler.OnConnect(wsConn) // Notify the handler of the new connection
 	go handleWebSocket(conn, handler)
 }
+
+func pingLoop(conn io.ReadWriteCloser, done <-chan struct{}) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			conn.Write([]byte{0x89, 0x00}) // 0x89 = PING frame with 0 payload
+		case <-done:
+			return
+		}
+	}
+}
+
 
 func readFrame(conn io.Reader) ([]byte, error) {
 	// Read first 2 bytes (FIN, RSV, Opcode | MASK, Payload length)
@@ -148,8 +164,13 @@ func writeFrame(conn io.Writer, message []byte) error {
 func handleWebSocket(conn io.ReadWriteCloser, handler WSHandler) {
 	defer conn.Close()
 
-	// Notify the handler that a client has connected
-	defer handler.OnClose(WSConn{conn: conn})
+	wsConn := WSConn{conn: conn}
+	handler.OnConnect(wsConn)
+	defer handler.OnClose(wsConn)
+
+	done := make(chan struct{})
+
+	go pingLoop(conn, done)
 
 	for {
 		msg, err := readFrame(conn)
@@ -158,6 +179,9 @@ func handleWebSocket(conn io.ReadWriteCloser, handler WSHandler) {
 			break
 		}
 
-		handler.OnMessage(WSConn{conn: conn}, string(msg)) // Notify the handler of the received message
+		handler.OnMessage(wsConn, string(msg))
 	}
+
+	close(done)
 }
+
