@@ -89,4 +89,4 @@ jobs:
         # Alternative: Fetch merged PRs if using GitHub CLI
         RELEASE_NOTES=$(gh api repos/:owner/:repo/pulls --jq '.[] | select(.merged_at != null) | "- #\(.number) \(.title) (@\(.user.login))"')
 
-        gh release create $EXTRACTED_VERSION --generate-notes --title "Release $EXTRACTED_VERSION"
+        gh release create v$EXTRACTED_VERSION --generate-notes --title "Release v$EXTRACTED_VERSION"
